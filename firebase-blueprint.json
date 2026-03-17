@@ -1,0 +1,71 @@
+{
+  "entities": {
+    "siteSettings": {
+      "title": "Site Settings",
+      "description": "Global configuration for the site appearance and contact info",
+      "type": "object",
+      "properties": {
+        "primaryColor": { "type": "string", "description": "Primary theme color (hex)" },
+        "secondaryColor": { "type": "string", "description": "Secondary theme color (hex)" },
+        "phone": { "type": "string", "description": "Contact phone number" },
+        "whatsapp": { "type": "string", "description": "WhatsApp contact number" },
+        "email": { "type": "string", "description": "Contact email address" },
+        "siteName": { "type": "string", "description": "Name of the site" },
+        "seoTitle": { "type": "string", "description": "SEO Title for Cameroon" },
+        "seoDescription": { "type": "string", "description": "SEO Description for Cameroon" }
+      },
+      "required": ["primaryColor", "phone", "whatsapp", "email"]
+    },
+    "product": {
+      "title": "Product",
+      "description": "A product sold on the site",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "originalPrice": { "type": "number" },
+        "image": { "type": "string" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "stock": { "type": "number" },
+        "isFlashSale": { "type": "boolean" },
+        "discount": { "type": "number" },
+        "soldCount": { "type": "number" }
+      },
+      "required": ["name", "price", "image", "category"]
+    },
+    "order": {
+      "title": "Order",
+      "description": "A customer order",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "deliveryAddress": { "type": "string" },
+        "city": { "type": "string" },
+        "items": { "type": "array", "items": { "type": "object" } },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "processing", "shipped", "delivered", "cancelled"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerName", "customerPhone", "deliveryAddress", "items", "totalAmount", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "settings/global": {
+      "schema": "siteSettings",
+      "description": "Global site settings"
+    },
+    "products/{productId}": {
+      "schema": "product",
+      "description": "Collection of products"
+    },
+    "orders/{orderId}": {
+      "schema": "order",
+      "description": "Collection of customer orders"
+    }
+  }
+}
