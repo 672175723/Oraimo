@@ -16,6 +16,8 @@ import {
   Twitter,
   Youtube,
   Smartphone,
+  CreditCard,
+  Banknote,
   X,
   MapPin,
   Star,
@@ -50,6 +52,7 @@ import {
   FileText,
   Loader2,
   ArrowUp,
+  Check,
   UserX,
   UserCheck,
   Key,
@@ -62,11 +65,13 @@ import {
   BarChart2,
   Activity,
   ArrowUpRight,
-  TrendingDown
+  TrendingDown,
+  Link as LinkIcon,
+  Images
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { BrowserRouter, Routes, Route, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
-import { PRODUCTS as MOCK_PRODUCTS, CATEGORIES, Product, Review, Order, SiteSettings, UserProfile } from './types';
+import { PRODUCTS as MOCK_PRODUCTS, CATEGORIES, Product, Review, Order, SiteSettings, UserProfile, CartItem } from './types';
 import { 
   LineChart, 
   Line, 
@@ -229,9 +234,10 @@ const DynamicStyle = ({ settings }: { settings: SiteSettings }) => {
 };
 
 // SEO Helper
-const useSEO = (title: string, description: string) => {
+const useSEO = (title: string, description: string, image?: string, product?: Product, keywords?: string) => {
   useEffect(() => {
     const fullTitle = `${title} | oraimo Cameroun`;
+    const url = window.location.href;
     document.title = fullTitle;
     
     const updateMeta = (name: string, content: string, isProperty = false) => {
@@ -249,12 +255,85 @@ const useSEO = (title: string, description: string) => {
       meta.setAttribute('content', content);
     };
 
+    const updateCanonical = (href: string) => {
+      let link: HTMLLinkElement | null = document.querySelector('link[rel="canonical"]');
+      if (!link) {
+        link = document.createElement('link');
+        link.setAttribute('rel', 'canonical');
+        document.head.appendChild(link);
+      }
+      link.setAttribute('href', href);
+    };
+
+    const updateJSONLD = (data: any) => {
+      let script = document.querySelector('script[type="application/ld+json"]');
+      if (!script) {
+        script = document.createElement('script');
+        script.setAttribute('type', 'application/ld+json');
+        document.head.appendChild(script);
+      }
+      script.textContent = JSON.stringify(data);
+    };
+
     updateMeta('description', description);
+    if (keywords) updateMeta('keywords', keywords);
     updateMeta('og:title', fullTitle, true);
     updateMeta('og:description', description, true);
+    updateMeta('og:url', url, true);
+    updateMeta('og:type', product ? 'product' : 'website', true);
+    if (image) updateMeta('og:image', image, true);
+
+    updateMeta('twitter:card', 'summary_large_image');
     updateMeta('twitter:title', fullTitle);
     updateMeta('twitter:description', description);
-  }, [title, description]);
+    if (image) updateMeta('twitter:image', image);
+
+    updateCanonical(url);
+
+    // Structured Data (JSON-LD)
+    if (product) {
+      const jsonLd = {
+        "@context": "https://schema.org/",
+        "@type": "Product",
+        "name": product.name,
+        "image": [product.image, ...(product.images || [])],
+        "description": product.description || description,
+        "sku": product.id,
+        "brand": {
+          "@type": "Brand",
+          "name": "oraimo"
+        },
+        "offers": {
+          "@type": "Offer",
+          "url": url,
+          "priceCurrency": "XAF",
+          "price": product.price,
+          "availability": "https://schema.org/InStock",
+          "itemCondition": "https://schema.org/NewCondition"
+        },
+        "aggregateRating": {
+          "@type": "AggregateRating",
+          "ratingValue": product.rating,
+          "reviewCount": product.reviewCount
+        }
+      };
+      updateJSONLD(jsonLd);
+    } else {
+      // General Website JSON-LD
+      const websiteLd = {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "oraimo Cameroun",
+        "url": window.location.origin,
+        "potentialAction": {
+          "@type": "SearchAction",
+          "target": `${window.location.origin}/search?q={search_term_string}`,
+          "query-input": "required name=search_term_string"
+        }
+      };
+      updateJSONLD(websiteLd);
+    }
+  }, [title, description, image, product]);
 };
 
 const EnregistrerButton = ({ onClick, label }: { onClick: () => Promise<void>, label: string }) => {
@@ -291,7 +370,7 @@ const ImageUploadField = ({
   value, 
   onChange, 
   disabled = false,
-  placeholder = "URL de l'image (Lien)"
+  placeholder = "URL de l'image (Lien direct)"
 }: { 
   label: string, 
   value: string, 
@@ -300,13 +379,13 @@ const ImageUploadField = ({
   placeholder?: string
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadMode, setUploadMode] = useState<'url' | 'file'>('url');
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
       const file = files[0];
       
-      // Compression logic
       const reader = new FileReader();
       reader.onload = (event) => {
         const img = new Image();
@@ -315,9 +394,8 @@ const ImageUploadField = ({
           let width = img.width;
           let height = img.height;
 
-          // Max dimensions
-          const MAX_WIDTH = 1200;
-          const MAX_HEIGHT = 1200;
+          const MAX_WIDTH = 1920;
+          const MAX_HEIGHT = 1080;
 
           if (width > height) {
             if (width > MAX_WIDTH) {
@@ -336,8 +414,7 @@ const ImageUploadField = ({
           const ctx = canvas.getContext('2d');
           ctx?.drawImage(img, 0, 0, width, height);
 
-          // Quality 0.7 to reduce size significantly
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
           onChange(dataUrl);
         };
         img.src = event.target?.result as string;
@@ -347,18 +424,45 @@ const ImageUploadField = ({
   };
 
   return (
-    <div className="space-y-2">
-      <label className="block text-xs font-black uppercase tracking-widest text-gray-400">{label}</label>
+    <div className="space-y-3">
+      <div className="flex justify-between items-center">
+        <label className="block text-xs font-black uppercase tracking-widest text-gray-400">{label}</label>
+        <div className="flex bg-gray-100 p-1 rounded-lg">
+          <button 
+            type="button"
+            onClick={() => setUploadMode('url')}
+            className={`px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${uploadMode === 'url' ? 'bg-white text-oraimo-black shadow-sm' : 'text-gray-400'}`}
+          >
+            Lien URL
+          </button>
+          <button 
+            type="button"
+            onClick={() => setUploadMode('file')}
+            className={`px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${uploadMode === 'file' ? 'bg-white text-oraimo-black shadow-sm' : 'text-gray-400'}`}
+          >
+            Fichier
+          </button>
+        </div>
+      </div>
+      
       <div className="flex flex-col gap-3">
-        <div className="flex gap-2">
-          <input 
-            disabled={disabled}
-            type="text" 
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={placeholder}
-            className="flex-1 bg-gray-50 border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50 transition-all"
-          />
+        {uploadMode === 'url' ? (
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
+                <LinkIcon size={14} />
+              </div>
+              <input 
+                disabled={disabled}
+                type="text" 
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                placeholder={placeholder}
+                className="w-full bg-gray-50 border-none rounded-xl pl-10 pr-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50 transition-all"
+              />
+            </div>
+          </div>
+        ) : (
           <div className="relative">
             <input 
               ref={fileInputRef}
@@ -372,22 +476,29 @@ const ImageUploadField = ({
               type="button"
               disabled={disabled}
               onClick={() => fileInputRef.current?.click()}
-              className="h-full px-4 bg-gray-100 rounded-xl text-gray-500 hover:bg-gray-200 transition-colors flex items-center gap-2 disabled:opacity-50"
+              className="w-full py-3 bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl text-gray-500 hover:bg-gray-100 hover:border-oraimo-green transition-all flex flex-col items-center justify-center gap-2 disabled:opacity-50"
             >
-              <Upload size={18} />
-              <span className="text-xs font-bold uppercase">Importer</span>
+              <Upload size={24} className="text-gray-300" />
+              <span className="text-xs font-bold uppercase tracking-widest">Choisir une image sur mon poste</span>
             </button>
           </div>
-        </div>
+        )}
+
         {value && (
-          <div className="relative w-24 h-24 bg-gray-50 rounded-xl overflow-hidden border border-gray-100 group shadow-sm">
+          <div className="relative w-full aspect-video bg-gray-50 rounded-2xl overflow-hidden border border-gray-100 group shadow-sm">
             <img src={value} alt="Preview" className="w-full h-full object-cover" />
-            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
+              <button 
+                onClick={() => window.open(value, '_blank')}
+                className="p-3 bg-white text-oraimo-black rounded-full hover:bg-gray-100 transition-colors shadow-lg"
+              >
+                <ExternalLink size={18} />
+              </button>
               <button 
                 onClick={() => onChange('')}
-                className="p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors shadow-lg"
+                className="p-3 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors shadow-lg"
               >
-                <X size={14} />
+                <Trash2 size={18} />
               </button>
             </div>
           </div>
@@ -514,7 +625,7 @@ const AppContent = () => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 5000);
   };
-  const [cartItems, setCartItems] = useState<any[]>([]);
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [timeLeft, setTimeLeft] = useState({ hours: 12, minutes: 45, seconds: 30 });
 
   useEffect(() => {
@@ -567,7 +678,10 @@ const AppContent = () => {
     secondaryColor: '#000000',
     phone: '+237 699 932 926',
     whatsapp: '+237699932926',
-    email: 'contact@oraimo-cm.com',
+    email: 'joellmikamm@gmail.com',
+    mtnNumber: '+237672175723',
+    orangeNumber: '+237699932926',
+    paypalEmail: 'joellmikamm@gmail.com',
     siteName: 'oraimo Cameroun',
     seoTitle: 'Boutique Officielle oraimo Cameroun | Accessoires Intelligents',
     seoDescription: 'Achetez des écouteurs, montres connectées, batteries externes et plus sur la boutique officielle oraimo au Cameroun. Livraison rapide et garantie officielle.',
@@ -599,7 +713,12 @@ const AppContent = () => {
     decimalPlaces: 0,
     currencySymbol: 'FCFA',
     currencyPosition: 'suffix',
-    isMaintenanceMode: false
+    isMaintenanceMode: false,
+    paymentAggregator: 'none',
+    campayAppId: '',
+    campayAppSecret: '',
+    cinetpayApiKey: '',
+    cinetpaySiteId: ''
   });
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -642,7 +761,13 @@ const AppContent = () => {
     }
   };
 
-  useSEO(settings.seoTitle, settings.seoDescription);
+  useSEO(
+    settings.seoTitle, 
+    settings.seoDescription, 
+    settings.heroBanners?.[0]?.image,
+    undefined,
+    settings.seoKeywords
+  );
 
   useEffect(() => {
     const testConnection = async () => {
@@ -718,30 +843,94 @@ const AppContent = () => {
     };
   }, []);
 
+  const hasTrackedVisit = useRef(false);
+
   // Track traffic
   useEffect(() => {
     const trackVisit = async () => {
+      if (hasTrackedVisit.current && !user) return; // Only track once per session, unless user logs in
+      
       const today = new Date().toISOString().split('T')[0];
       const statsRef = doc(db, 'stats', today);
+      
+      // Determine source
+      let source = 'Direct';
+      const referrer = document.referrer;
+      if (referrer) {
+        if (referrer.includes('facebook.com')) source = 'Facebook';
+        else if (referrer.includes('google.com')) source = 'Google';
+        else if (referrer.includes('instagram.com')) source = 'Instagram';
+        else if (referrer.includes('t.co') || referrer.includes('twitter.com')) source = 'Twitter';
+        else {
+          try {
+            source = new URL(referrer).hostname;
+          } catch (e) {
+            source = 'Autre';
+          }
+        }
+      }
+
+      // Determine location (IP-based)
+      let locationData = { city: 'Inconnu', country: 'Inconnu', region: 'Inconnu' };
       try {
-        await setDoc(statsRef, {
-          visits: increment(1),
-          date: today
-        }, { merge: true });
+        const response = await fetch('https://ipapi.co/json/');
+        if (response.ok) {
+          const data = await response.json();
+          locationData = {
+            city: data.city || 'Inconnu',
+            country: data.country_name || 'Inconnu',
+            region: data.region || 'Inconnu'
+          };
+        }
+      } catch (e) {
+        console.error("Error fetching location:", e);
+      }
+
+      // Determine demographics (if logged in)
+      let demographicKey = 'Anonyme';
+      if (user) {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            const age = userData.age || 'Inconnu';
+            const gender = userData.gender || 'Inconnu';
+            demographicKey = `${gender}_${age}`;
+          }
+        } catch (e) {
+          console.error("Error fetching user demographics:", e);
+        }
+      }
+
+      try {
+        const updates: any = {
+          date: today,
+          [`sources.${source.replace(/\./g, '_')}`]: increment(1),
+          [`locations.${locationData.country.replace(/\./g, '_')}_${locationData.city.replace(/\./g, '_')}`]: increment(1),
+          [`demographics.${demographicKey.replace(/\./g, '_')}`]: increment(1)
+        };
+        
+        // Only increment total visits once
+        if (!hasTrackedVisit.current) {
+          updates.visits = increment(1);
+          hasTrackedVisit.current = true;
+        }
+        
+        await setDoc(statsRef, updates, { merge: true });
       } catch (e) {
         console.error("Error tracking visit:", e);
       }
     };
     trackVisit();
-  }, []);
+  }, [user]);
 
-  const addToCart = async (product: Product, quantity: number = 1) => {
+  const addToCart = async (product: Product, quantity: number = 1, color?: string) => {
     setCartItems(prev => {
-      const existing = prev.find(item => item.id === product.id);
+      const existing = prev.find(item => item.id === product.id && item.color === color);
       if (existing) {
-        return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + quantity } : item);
+        return prev.map(item => (item.id === product.id && item.color === color) ? { ...item, quantity: item.quantity + quantity } : item);
       }
-      return [...prev, { ...product, quantity }];
+      return [...prev, { ...product, quantity, color }];
     });
     setIsCartOpen(true);
     
@@ -758,9 +947,9 @@ const AppContent = () => {
     }
   };
 
-  const updateQuantity = (productId: string, delta: number) => {
+  const updateQuantity = (productId: string, delta: number, color?: string) => {
     setCartItems(prev => prev.map(item => {
-      if (item.id === productId) {
+      if (item.id === productId && item.color === color) {
         const newQty = Math.max(1, item.quantity + delta);
         return { ...item, quantity: newQty };
       }
@@ -768,8 +957,8 @@ const AppContent = () => {
     }));
   };
 
-  const removeFromCart = (productId: string) => {
-    setCartItems(prev => prev.filter(item => item.id !== productId));
+  const removeFromCart = (productId: string, color?: string) => {
+    setCartItems(prev => prev.filter(item => !(item.id === productId && item.color === color)));
   };
 
   useEffect(() => {
@@ -990,6 +1179,14 @@ const AppContent = () => {
         )}
       </AnimatePresence>
 
+      {/* Back to Top Button */}
+      <button 
+        onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+        className="fixed bottom-6 right-6 w-12 h-12 bg-black/40 backdrop-blur-md text-white rounded-full flex items-center justify-center shadow-lg z-50 hover:bg-black/60 transition-all"
+      >
+        <ArrowUp size={24} />
+      </button>
+
       {/* Cart Drawer */}
       <AnimatePresence>
         {isCartOpen && (
@@ -1044,19 +1241,25 @@ const AppContent = () => {
                         </div>
                         <div className="flex-grow">
                           <h4 className="text-sm font-bold text-oraimo-black line-clamp-1">{item.name}</h4>
+                          {item.color && (
+                            <div className="flex items-center gap-1 mt-1">
+                              <div className="w-3 h-3 rounded-full border border-gray-200" style={{ backgroundColor: item.color }} />
+                              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{item.color}</span>
+                            </div>
+                          )}
                           <p className="text-xs text-gray-400 mb-2">{item.category}</p>
                           <div className="flex justify-between items-center">
                             <span className="font-black text-sm">{formatPrice(item.price * item.quantity)}</span>
                             <div className="flex items-center gap-3 border border-gray-200 rounded-full px-2 py-1">
                               <button 
-                                onClick={() => updateQuantity(item.id, -1)}
+                                onClick={() => updateQuantity(item.id, -1, item.color)}
                                 className="text-gray-400 hover:text-oraimo-green"
                               >
                                 <Minus size={14} />
                               </button>
                               <span className="text-xs font-bold">{item.quantity}</span>
                               <button 
-                                onClick={() => updateQuantity(item.id, 1)}
+                                onClick={() => updateQuantity(item.id, 1, item.color)}
                                 className="text-gray-400 hover:text-oraimo-green"
                               >
                                 <Plus size={14} />
@@ -1064,7 +1267,7 @@ const AppContent = () => {
                             </div>
                           </div>
                           <button 
-                            onClick={() => removeFromCart(item.id)}
+                            onClick={() => removeFromCart(item.id, item.color)}
                             className="text-[10px] font-bold text-red-500 uppercase tracking-wider mt-2 hover:underline"
                           >
                             Supprimer
@@ -1323,7 +1526,7 @@ const AppContent = () => {
                     </button>
                   </div>
                   
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                     {products.slice(0, 4).map((product) => (
                       <ProductCard 
                         key={product.id} 
@@ -1587,7 +1790,7 @@ const AppContent = () => {
                   <Lock size={32} />
                 </div>
                 <h2 className="text-2xl font-black italic uppercase tracking-tight">Accès Administrateur</h2>
-                <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mt-2 text-center">Connectez-vous avec votre compte Google autorisé</p>
+                <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mt-2 text-center">Identifiez-vous pour gérer la boutique</p>
               </div>
 
               <form onSubmit={handleManualAdminLogin} className="space-y-4">
@@ -1656,6 +1859,7 @@ const AppContent = () => {
             }}
             showNotification={showNotification}
             formatPrice={formatPrice}
+            settings={settings}
           />
         )}
       </AnimatePresence>
@@ -1678,7 +1882,13 @@ const ProductDetailPage = ({ products, onAddToCart, settings, showNotification, 
   const product = products.find(p => p.id === id);
   const initialIsOrdering = (location.state as any)?.openOrderForm || false;
 
-  useSEO(product?.name || 'Produit', product?.description || '');
+  useSEO(
+    product?.name || 'Produit', 
+    product?.seoDescription || product?.description || '', 
+    product?.image,
+    product,
+    settings.seoKeywords
+  );
 
   if (!product) return <div className="container py-20 text-center">Produit non trouvé</div>;
 
@@ -1852,10 +2062,6 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
   }, [isLoggedIn, isSuperAdmin]);
 
   const handleSaveSettings = async () => {
-    if (!user) {
-      showNotification('Veuillez vous connecter avec Google pour enregistrer les modifications', 'error');
-      return;
-    }
     try {
       await setDoc(doc(db, 'settings', 'global'), editSettings);
       setIsEditingSettings(false);
@@ -1912,8 +2118,8 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
             <form onSubmit={handleAdminLogin} className="w-full space-y-8">
               <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 mb-4">
                 <p className="text-[10px] text-blue-600 font-bold leading-relaxed">
-                  <span className="block mb-1">💡 NOTE DE SÉCURITÉ :</span>
-                  Pour enregistrer des modifications sur le site, vous devez impérativement vous connecter via le bouton Google ci-dessous avec votre compte administrateur.
+                  <span className="block mb-1">💡 ACCÈS ADMINISTRATEUR :</span>
+                  Vous pouvez vous connecter avec vos identifiants ou via Google. L'enregistrement des données est désormais possible avec les deux méthodes.
                 </p>
               </div>
               <div>
@@ -2113,6 +2319,69 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
               </div>
             </div>
 
+            {/* Detailed Traffic Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
+              <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                <h4 className="text-sm font-black mb-4 uppercase tracking-widest flex items-center gap-2">
+                  <Globe size={16} /> Origine du Trafic
+                </h4>
+                <div className="space-y-3">
+                  {(() => {
+                    const todayStats = stats.find(s => s.date === new Date().toISOString().split('T')[0]);
+                    const sources = todayStats?.sources || {};
+                    const entries = Object.entries(sources);
+                    if (entries.length === 0) return <p className="text-[10px] text-gray-400 font-bold italic">Aucune donnée aujourd'hui</p>;
+                    return entries.sort((a, b) => (b[1] as number) - (a[1] as number)).map(([source, count]) => (
+                      <div key={source} className="flex justify-between items-center text-xs">
+                        <span className="font-bold text-gray-600">{source.replace(/_/g, '.')}</span>
+                        <span className="bg-gray-100 px-2 py-1 rounded-lg font-black">{count as number}</span>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                <h4 className="text-sm font-black mb-4 uppercase tracking-widest flex items-center gap-2">
+                  <MapPin size={16} /> Lieux d'Origine
+                </h4>
+                <div className="space-y-3">
+                  {(() => {
+                    const todayStats = stats.find(s => s.date === new Date().toISOString().split('T')[0]);
+                    const locations = todayStats?.locations || {};
+                    const entries = Object.entries(locations);
+                    if (entries.length === 0) return <p className="text-[10px] text-gray-400 font-bold italic">Aucune donnée aujourd'hui</p>;
+                    return entries.sort((a, b) => (b[1] as number) - (a[1] as number)).slice(0, 5).map(([loc, count]) => (
+                      <div key={loc} className="flex justify-between items-center text-xs">
+                        <span className="font-bold text-gray-600">{loc.replace(/_/g, ' ')}</span>
+                        <span className="bg-gray-100 px-2 py-1 rounded-lg font-black">{count as number}</span>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                <h4 className="text-sm font-black mb-4 uppercase tracking-widest flex items-center gap-2">
+                  <User size={16} /> Démographie (Sexe/Âge)
+                </h4>
+                <div className="space-y-3">
+                  {(() => {
+                    const todayStats = stats.find(s => s.date === new Date().toISOString().split('T')[0]);
+                    const demographics = todayStats?.demographics || {};
+                    const entries = Object.entries(demographics);
+                    if (entries.length === 0) return <p className="text-[10px] text-gray-400 font-bold italic">Aucune donnée aujourd'hui</p>;
+                    return entries.sort((a, b) => (b[1] as number) - (a[1] as number)).map(([demo, count]) => (
+                      <div key={demo} className="flex justify-between items-center text-xs">
+                        <span className="font-bold text-gray-600">{demo.replace(/_/g, ' ')}</span>
+                        <span className="bg-gray-100 px-2 py-1 rounded-lg font-black">{count as number}</span>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm">
                 <h4 className="text-lg font-black mb-6 flex items-center gap-2">
@@ -2232,6 +2501,16 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                         }`}>
                           {order.status}
                         </span>
+                        <span className={`px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-gray-100 text-gray-600 flex items-center gap-1`}>
+                          {order.paymentMethod === 'cash_on_delivery' ? <Banknote size={10} /> : order.paymentMethod === 'mobile_money' ? <Smartphone size={10} /> : <CreditCard size={10} />}
+                          {order.paymentMethod === 'cash_on_delivery' ? 'Cash' : order.paymentMethod === 'mobile_money' ? 'Momo' : 'Carte'}
+                        </span>
+                        <span className={`px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                          order.paymentStatus === 'paid' ? 'bg-green-100 text-green-700' :
+                          order.paymentStatus === 'failed' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'
+                        }`}>
+                          {order.paymentStatus === 'paid' ? 'Payé' : order.paymentStatus === 'failed' ? 'Échec' : 'Non payé'}
+                        </span>
                       </div>
                       <h4 className="text-lg font-black">{order.customerName}</h4>
                       <div className="flex items-center gap-4 text-sm text-gray-500 mt-1">
@@ -2249,8 +2528,11 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                   <div className="border-t border-gray-50 pt-4 flex flex-wrap gap-4 items-center justify-between">
                     <div className="flex gap-2">
                       {order.items.map((item, i) => (
-                        <span key={i} className="bg-gray-100 px-3 py-1 rounded-lg text-xs font-bold">
+                        <span key={i} className="bg-gray-100 px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1">
                           {item.quantity}x {item.name}
+                          {item.color && (
+                            <span className="text-[10px] text-gray-400">({item.color})</span>
+                          )}
                         </span>
                       ))}
                     </div>
@@ -2258,10 +2540,6 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                       <select 
                         value={order.status}
                         onChange={async (e) => {
-                          if (!user) {
-                            showNotification('Veuillez vous connecter avec Google pour modifier le statut', 'error');
-                            return;
-                          }
                           try {
                             await updateDoc(doc(db, 'orders', order.id), { status: e.target.value });
                           } catch (error) {
@@ -2275,6 +2553,21 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                         <option value="shipped">Expédié</option>
                         <option value="delivered">Livré</option>
                         <option value="cancelled">Annulé</option>
+                      </select>
+                      <select 
+                        value={order.paymentStatus}
+                        onChange={async (e) => {
+                          try {
+                            await updateDoc(doc(db, 'orders', order.id), { paymentStatus: e.target.value });
+                          } catch (error) {
+                            handleFirestoreError(error, OperationType.WRITE, `orders/${order.id}`);
+                          }
+                        }}
+                        className="bg-gray-100 border-none rounded-lg px-4 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-oraimo-green"
+                      >
+                        <option value="pending">Paiement en attente</option>
+                        <option value="paid">Payé</option>
+                        <option value="failed">Échec</option>
                       </select>
                       <button 
                         onClick={() => {
@@ -2318,9 +2611,17 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                                       <div>${order.customerEmail || ''}</div>
                                     </div>
                                     <div class="section">
-                                      <div class="section-title">Livraison</div>
+                                      <div class="section-title">Livraison & Paiement</div>
                                       <div>${order.city}</div>
                                       <div>${order.deliveryAddress}</div>
+                                      <div style="margin-top: 8px; font-weight: bold; color: #000;">
+                                        Mode de paiement: ${
+                                          order.paymentMethod === 'cash_on_delivery' ? 'Paiement à la livraison' :
+                                          order.paymentMethod === 'mobile_money' ? 'Mobile Money' :
+                                          order.paymentMethod === 'paypal' ? 'PayPal' :
+                                          order.paymentMethod === 'card' ? 'Carte Bancaire' : order.paymentMethod
+                                        }
+                                      </div>
                                     </div>
                                   </div>
 
@@ -2373,10 +2674,6 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                       </button>
                       <button 
                         onClick={async () => {
-                          if (!user) {
-                            showNotification('Veuillez vous connecter avec Google pour effectuer cette action', 'error');
-                            return;
-                          }
                           if (window.confirm('Supprimer cette commande ?')) {
                             try {
                               await deleteDoc(doc(db, 'orders', order.id));
@@ -2487,6 +2784,111 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-gray-400 mb-2">Numéro MTN (Paiement)</label>
+                  <input 
+                    disabled={!isEditingSettings}
+                    type="text" 
+                    value={editSettings.mtnNumber || ''}
+                    onChange={(e) => setEditSettings({...editSettings, mtnNumber: e.target.value})}
+                    className="w-full bg-gray-50 border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-gray-400 mb-2">Numéro Orange (Paiement)</label>
+                  <input 
+                    disabled={!isEditingSettings}
+                    type="text" 
+                    value={editSettings.orangeNumber || ''}
+                    onChange={(e) => setEditSettings({...editSettings, orangeNumber: e.target.value})}
+                    className="w-full bg-gray-50 border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-gray-400 mb-2">Email PayPal (Paiement)</label>
+                  <input 
+                    disabled={!isEditingSettings}
+                    type="text" 
+                    value={editSettings.paypalEmail || ''}
+                    onChange={(e) => setEditSettings({...editSettings, paypalEmail: e.target.value})}
+                    className="w-full bg-gray-50 border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-6 border-t border-gray-50">
+                <h4 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-4 flex items-center gap-2">
+                  <CreditCard size={16} /> Configuration des Paiements (Cameroun)
+                </h4>
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-2">Agrégateur de Paiement</label>
+                    <select 
+                      disabled={!isEditingSettings}
+                      value={editSettings.paymentAggregator || 'none'}
+                      onChange={(e) => setEditSettings({...editSettings, paymentAggregator: e.target.value as any})}
+                      className="w-full bg-gray-50 border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50"
+                    >
+                      <option value="none">Aucun (Paiement à la livraison uniquement)</option>
+                      <option value="campay">Campay (Mobile Money)</option>
+                      <option value="cinetpay">CinetPay (Mobile Money & Cartes)</option>
+                      <option value="flutterwave">Flutterwave (International & Mobile Money)</option>
+                    </select>
+                  </div>
+
+                  {editSettings.paymentAggregator === 'campay' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2">
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-2">Campay App ID</label>
+                        <input 
+                          disabled={!isEditingSettings}
+                          type="password" 
+                          value={editSettings.campayAppId || ''}
+                          onChange={(e) => setEditSettings({...editSettings, campayAppId: e.target.value})}
+                          className="w-full bg-gray-50 border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-2">Campay App Secret</label>
+                        <input 
+                          disabled={!isEditingSettings}
+                          type="password" 
+                          value={editSettings.campayAppSecret || ''}
+                          onChange={(e) => setEditSettings({...editSettings, campayAppSecret: e.target.value})}
+                          className="w-full bg-gray-50 border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {editSettings.paymentAggregator === 'cinetpay' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2">
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-2">CinetPay API Key</label>
+                        <input 
+                          disabled={!isEditingSettings}
+                          type="password" 
+                          value={editSettings.cinetpayApiKey || ''}
+                          onChange={(e) => setEditSettings({...editSettings, cinetpayApiKey: e.target.value})}
+                          className="w-full bg-gray-50 border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-2">CinetPay Site ID</label>
+                        <input 
+                          disabled={!isEditingSettings}
+                          type="text" 
+                          value={editSettings.cinetpaySiteId || ''}
+                          onChange={(e) => setEditSettings({...editSettings, cinetpaySiteId: e.target.value})}
+                          className="w-full bg-gray-50 border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="pt-6 border-t border-gray-50">
                 <h4 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-4 flex items-center gap-2">
                   <Globe size={16} /> SEO & Référencement (Cameroun)
@@ -2510,6 +2912,17 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                       value={editSettings.seoDescription}
                       onChange={(e) => setEditSettings({...editSettings, seoDescription: e.target.value})}
                       className="w-full bg-gray-50 border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50 resize-none"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs font-bold text-gray-500 mb-2">Mots-clés SEO (Séparés par des virgules)</label>
+                    <input 
+                      disabled={!isEditingSettings}
+                      type="text" 
+                      value={editSettings.seoKeywords || ''}
+                      onChange={(e) => setEditSettings({...editSettings, seoKeywords: e.target.value})}
+                      className="w-full bg-gray-50 border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50"
+                      placeholder="oraimo, écouteurs, montres, accessoires..."
                     />
                   </div>
                 </div>
@@ -2635,26 +3048,75 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
 
               {/* Hero Banners Management */}
               <div className="pt-6 border-t border-gray-50">
-                <div className="flex justify-between items-center mb-6">
-                  <h4 className="text-sm font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
-                    <LayoutDashboard size={16} /> Bannières d'accueil (Carousel)
-                  </h4>
-                  <button 
-                    disabled={!isEditingSettings}
-                    onClick={() => {
-                      const newBanners = [...(editSettings.heroBanners || [])];
-                      newBanners.push({ image: '', title: '', subtitle: '', cta: 'Découvrir' });
-                      setEditSettings({...editSettings, heroBanners: newBanners});
-                    }}
-                    className="bg-oraimo-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 disabled:opacity-50"
-                  >
-                    <Plus size={14} /> Ajouter une bannière
-                  </button>
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+                  <div>
+                    <h4 className="text-sm font-black uppercase tracking-widest text-gray-400 flex items-center gap-2 mb-1">
+                      <LayoutDashboard size={16} /> Bannières d'accueil (Carousel)
+                    </h4>
+                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Gérez les images défilantes de la page d'accueil</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="relative">
+                      <input 
+                        type="file" 
+                        multiple 
+                        accept="image/*"
+                        className="hidden"
+                        id="bulk-banner-upload"
+                        disabled={!isEditingSettings}
+                        onChange={(e) => {
+                          const files = e.target.files;
+                          if (files && files.length > 0) {
+                            const newBanners = [...(editSettings.heroBanners || [])];
+                            let loadedCount = 0;
+                            Array.from(files).forEach((file: File) => {
+                              const reader = new FileReader();
+                              reader.onloadend = () => {
+                                newBanners.push({ 
+                                  image: reader.result as string, 
+                                  title: 'Nouvelle Offre', 
+                                  subtitle: 'Description de l\'offre', 
+                                  cta: 'Découvrir',
+                                  link: '/collections/all'
+                                });
+                                loadedCount++;
+                                if (loadedCount === files.length) {
+                                  setEditSettings({...editSettings, heroBanners: newBanners});
+                                  showNotification(`${files.length} bannières ajoutées`);
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            });
+                          }
+                        }}
+                      />
+                      <label 
+                        htmlFor="bulk-banner-upload"
+                        className={`bg-oraimo-green text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 cursor-pointer transition-all hover:scale-105 active:scale-95 ${!isEditingSettings ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        <Images size={14} /> Importation Groupée
+                      </label>
+                    </div>
+                    <button 
+                      disabled={!isEditingSettings}
+                      onClick={() => {
+                        const newBanners = [...(editSettings.heroBanners || [])];
+                        newBanners.push({ image: '', title: '', subtitle: '', cta: 'Découvrir', link: '' });
+                        setEditSettings({...editSettings, heroBanners: newBanners});
+                      }}
+                      className="bg-oraimo-black text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 disabled:opacity-50 transition-all hover:scale-105 active:scale-95"
+                    >
+                      <Plus size={14} /> Ajouter manuellement
+                    </button>
+                  </div>
                 </div>
 
-                <div className="space-y-6">
+                <div className="space-y-8">
                   {(editSettings.heroBanners || []).map((banner, idx) => (
-                    <div key={idx} className="p-6 bg-gray-50 rounded-2xl relative border border-gray-100">
+                    <div key={idx} className="p-8 bg-gray-50 rounded-[32px] relative border border-gray-100 shadow-sm group">
+                      <div className="absolute -top-3 -left-3 w-8 h-8 bg-oraimo-black text-white rounded-full flex items-center justify-center text-xs font-black italic shadow-lg z-10">
+                        {idx + 1}
+                      </div>
                       <button 
                         disabled={!isEditingSettings}
                         onClick={() => {
@@ -2662,15 +3124,15 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                           newBanners.splice(idx, 1);
                           setEditSettings({...editSettings, heroBanners: newBanners});
                         }}
-                        className="absolute top-4 right-4 p-2 text-gray-400 hover:text-red-500 disabled:opacity-50 transition-colors"
+                        className="absolute top-4 right-4 p-2 text-gray-300 hover:text-red-500 disabled:opacity-50 transition-colors bg-white rounded-full shadow-sm"
                       >
                         <Trash2 size={18} />
                       </button>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="space-y-4">
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        <div className="space-y-6">
                           <ImageUploadField 
                             disabled={!isEditingSettings}
-                            label={`Image de la bannière ${idx + 1}`}
+                            label={`Visuel de la bannière`}
                             value={banner.image}
                             onChange={(val) => {
                               const newBanners = [...(editSettings.heroBanners || [])];
@@ -2679,7 +3141,9 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                             }}
                           />
                           <div>
-                            <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Lien de redirection (ex: /shop ou URL)</label>
+                            <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2 flex items-center gap-2">
+                              <LinkIcon size={12} /> Lien de redirection
+                            </label>
                             <input 
                               disabled={!isEditingSettings}
                               type="text" 
@@ -2689,14 +3153,15 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                                 newBanners[idx] = { ...newBanners[idx], link: e.target.value };
                                 setEditSettings({...editSettings, heroBanners: newBanners});
                               }}
-                              placeholder="/product/1 ou https://..."
-                              className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50"
+                              placeholder="/collections/audio ou https://..."
+                              className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50 shadow-sm"
                             />
                           </div>
                         </div>
-                        <div className="space-y-4">
+                        <div className="space-y-4 bg-white/50 p-6 rounded-2xl border border-white">
+                          <h5 className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-4">Contenu Textuel</h5>
                           <div>
-                            <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Titre</label>
+                            <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Titre Principal</label>
                             <input 
                               disabled={!isEditingSettings}
                               type="text" 
@@ -2706,21 +3171,21 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                                 newBanners[idx] = { ...newBanners[idx], title: e.target.value };
                                 setEditSettings({...editSettings, heroBanners: newBanners});
                               }}
-                              className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50"
+                              className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50 shadow-sm"
                             />
                           </div>
                           <div>
-                            <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Sous-titre</label>
-                            <input 
+                            <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Sous-titre / Description</label>
+                            <textarea 
                               disabled={!isEditingSettings}
-                              type="text" 
+                              rows={2}
                               value={banner.subtitle}
                               onChange={(e) => {
                                 const newBanners = [...(editSettings.heroBanners || [])];
                                 newBanners[idx] = { ...newBanners[idx], subtitle: e.target.value };
                                 setEditSettings({...editSettings, heroBanners: newBanners});
                               }}
-                              className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50"
+                              className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50 shadow-sm resize-none"
                             />
                           </div>
                           <div>
@@ -2734,13 +3199,21 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                                 newBanners[idx] = { ...newBanners[idx], cta: e.target.value };
                                 setEditSettings({...editSettings, heroBanners: newBanners});
                               }}
-                              className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50"
+                              className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-oraimo-green disabled:opacity-50 shadow-sm"
                             />
                           </div>
                         </div>
                       </div>
                     </div>
                   ))}
+                  
+                  {(editSettings.heroBanners || []).length === 0 && (
+                    <div className="py-20 text-center bg-gray-50 rounded-[32px] border-2 border-dashed border-gray-200">
+                      <LayoutDashboard size={48} className="mx-auto text-gray-200 mb-4" />
+                      <p className="text-gray-400 font-bold">Aucune bannière configurée.</p>
+                      <p className="text-[10px] text-gray-300 uppercase tracking-widest mt-1">Ajoutez des bannières pour animer votre page d'accueil</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2776,6 +3249,7 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                     category: 'Audio',
                     tag: '',
                     description: '',
+                    seoDescription: '',
                     rating: 5,
                     reviewCount: 0,
                     features: [],
@@ -3016,10 +3490,6 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
               <div className="flex gap-4">
                 <button 
                   onClick={async () => {
-                    if (!user) {
-                      showNotification('Veuillez vous connecter avec Google pour effectuer cette action', 'error');
-                      return;
-                    }
                     try {
                       try {
                         await deleteDoc(doc(db, 'products', productToDelete));
@@ -3150,6 +3620,17 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                 </div>
 
                 <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-gray-400 mb-2">Description SEO (Optionnel - Pour Google)</label>
+                  <textarea 
+                    value={editingProduct.seoDescription || ''}
+                    onChange={(e) => setEditingProduct({...editingProduct, seoDescription: e.target.value})}
+                    placeholder="Une courte description accrocheuse pour les moteurs de recherche..."
+                    className="w-full bg-gray-50 border-none rounded-xl p-4 font-medium h-24 focus:ring-2 focus:ring-oraimo-green outline-none transition-all"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1 italic">Si vide, la description principale sera utilisée.</p>
+                </div>
+
+                <div>
                   <label className="block text-xs font-black uppercase tracking-widest text-gray-400 mb-2">Tag (ex: HOT, NOUVEAU)</label>
                   <input 
                     type="text" 
@@ -3159,13 +3640,21 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                   />
                 </div>
 
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-gray-400 mb-2">Couleurs disponibles (séparées par des virgules)</label>
+                  <input 
+                    type="text" 
+                    value={editingProduct.colors?.join(', ') || ''}
+                    onChange={(e) => setEditingProduct({...editingProduct, colors: e.target.value.split(',').map(c => c.trim()).filter(c => c !== '')})}
+                    placeholder="Noir, Blanc, #FF0000"
+                    className="w-full bg-gray-50 border-none rounded-xl p-4 font-bold"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1 italic">Entrez des noms de couleurs ou des codes hexadécimaux.</p>
+                </div>
+
                   <div className="flex gap-4 pt-4">
                     <EnregistrerButton 
                       onClick={async () => {
-                        if (!user) {
-                          showNotification('Veuillez vous connecter avec Google pour enregistrer les modifications', 'error');
-                          return;
-                        }
                         try {
                           if (editingProduct.id) {
                             const { id, ...data } = editingProduct as any;
@@ -3192,7 +3681,7 @@ const AdminDashboard = ({ products, settings, showNotification, isAdmin, user, f
                         } catch (err: any) {
                           console.error(err);
                           const message = err.message?.includes('permission') 
-                            ? 'Erreur de permission : Vérifiez que vous êtes connecté avec le bon compte admin via Google.'
+                            ? 'Erreur de permission : Vérifiez que vous êtes bien connecté.'
                             : 'Erreur lors de l\'enregistrement du produit. Veuillez réessayer.';
                           showNotification(message, 'error');
                         }
@@ -3219,7 +3708,7 @@ const ProductDetail: React.FC<{
   product: Product, 
   products: Product[], 
   onBack: () => void, 
-  onAddToCart: (p: Product, q?: number) => void, 
+  onAddToCart: (p: Product, q?: number, color?: string) => void, 
   onSelectProduct: (p: Product) => void, 
   settings: SiteSettings,
   showNotification: (m: string, t?: 'success' | 'error') => void,
@@ -3229,6 +3718,7 @@ const ProductDetail: React.FC<{
 }> = ({ product, products, onBack, onAddToCart, onSelectProduct, settings, showNotification, initialIsOrdering = false, handleShare, formatPrice }) => {
   const navigate = useNavigate();
   const [quantity, setQuantity] = useState(1);
+  const [selectedColor, setSelectedColor] = useState<string | null>(product.colors?.[0] || null);
   const [activeTab, setActiveTab] = useState('description');
   const [currentImage, setCurrentImage] = useState(0);
   const [isOrdering, setIsOrdering] = useState(initialIsOrdering);
@@ -3236,8 +3726,36 @@ const ProductDetail: React.FC<{
     name: '',
     phone: '',
     city: 'Douala',
-    address: ''
+    address: '',
+    paymentMethod: 'cash_on_delivery' as 'cash_on_delivery' | 'mobile_money' | 'card' | 'paypal'
   });
+
+  const paymentMethods = [
+    {
+      id: 'cash_on_delivery',
+      title: 'Paiement à la livraison',
+      description: 'Payez en espèces lors de la réception de votre colis.',
+      icon: <Banknote size={20} className="text-oraimo-green" />
+    },
+    {
+      id: 'mobile_money',
+      title: 'Mobile Money (Orange/MTN)',
+      description: 'Paiement sécurisé via Orange Money ou MTN Mobile Money.',
+      icon: <Smartphone size={20} className="text-orange-500" />
+    },
+    {
+      id: 'paypal',
+      title: 'PayPal',
+      description: 'Paiement sécurisé via PayPal.',
+      icon: <CreditCard size={20} className="text-blue-600" />
+    },
+    {
+      id: 'card',
+      title: 'Carte Bancaire',
+      description: 'Payez par carte Visa ou Mastercard.',
+      icon: <CreditCard size={20} className="text-blue-500" />
+    }
+  ];
 
   const images = product.images || [product.image];
 
@@ -3250,6 +3768,21 @@ const ProductDetail: React.FC<{
 
     setIsOrdering(true);
     try {
+      // Simulate payment processing for non-COD methods
+      if (orderForm.paymentMethod !== 'cash_on_delivery') {
+        // Here you would normally call the payment aggregator's API
+        // based on settings.paymentAggregator
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        if (settings.paymentAggregator === 'none') {
+          showNotification('Aucun agrégateur de paiement configuré. La commande sera traitée comme Paiement à la Livraison.', 'error');
+        } else {
+          showNotification(`Redirection vers ${settings.paymentAggregator.toUpperCase()}...`, 'success');
+          // In a real app, you would redirect here:
+          // window.location.href = paymentUrl;
+        }
+      }
+
       const orderData: Omit<Order, 'id'> = {
         customerName: orderForm.name,
         customerPhone: orderForm.phone,
@@ -3259,10 +3792,13 @@ const ProductDetail: React.FC<{
           productId: product.id,
           name: product.name,
           quantity: quantity,
-          price: product.price
+          price: product.price,
+          color: selectedColor || undefined
         }],
         totalAmount: product.price * quantity,
         status: 'pending',
+        paymentMethod: orderForm.paymentMethod,
+        paymentStatus: 'pending',
         createdAt: serverTimestamp()
       };
 
@@ -3286,10 +3822,39 @@ const ProductDetail: React.FC<{
   }, [product]);
 
   return (
-    <div className="bg-white">
-      <div className="container py-4">
+    <div className="bg-white min-h-screen pb-24">
+      {/* Sticky Sub-header */}
+      <div className="sticky top-[64px] z-30 bg-white border-b border-gray-100 shadow-sm">
+        <div className="container h-14 flex items-center justify-between">
+          <h2 className="text-sm font-black text-oraimo-black uppercase tracking-tight truncate max-w-[200px]">
+            {product.name}
+          </h2>
+          <div className="flex h-full">
+            <button 
+              onClick={() => {
+                setActiveTab('description');
+                document.getElementById('product-content')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }}
+              className={`px-4 h-full text-[11px] font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'description' ? 'border-oraimo-green text-oraimo-green' : 'border-transparent text-gray-400'}`}
+            >
+              Description
+            </button>
+            <button 
+              onClick={() => {
+                setActiveTab('reviews');
+                document.getElementById('product-content')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }}
+              className={`px-4 h-full text-[11px] font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'reviews' ? 'border-oraimo-green text-oraimo-green' : 'border-transparent text-gray-400'}`}
+            >
+              Avis des clients
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="container py-8">
         {/* Breadcrumbs */}
-        <div className="flex items-center gap-2 text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-8">
+        <div className="flex items-center gap-2 text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-8">
           <button onClick={onBack} className="hover:text-oraimo-green">Accueil</button>
           <ChevronRight size={12} />
           <span className="text-gray-600">{product.category}</span>
@@ -3324,7 +3889,13 @@ const ProductDetail: React.FC<{
                   onClick={() => setCurrentImage(idx)}
                   className={`w-20 h-20 rounded-lg overflow-hidden border-2 transition-all flex-shrink-0 ${currentImage === idx ? 'border-oraimo-green' : 'border-transparent bg-[#F5F5F5]'}`}
                 >
-                  <img src={img} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer" loading="lazy" />
+                  <img 
+                    src={img} 
+                    alt={`${product.name} - Vue ${idx + 1}`} 
+                    className="w-full h-full object-contain" 
+                    referrerPolicy="no-referrer" 
+                    loading="lazy" 
+                  />
                 </button>
               ))}
             </div>
@@ -3355,6 +3926,27 @@ const ProductDetail: React.FC<{
                 </span>
               )}
             </div>
+
+            {product.colors && product.colors.length > 0 && (
+              <div className="mb-8">
+                <h4 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-4">Couleur</h4>
+                <div className="flex flex-wrap gap-3">
+                  {product.colors.map((color) => (
+                    <button
+                      key={color}
+                      onClick={() => setSelectedColor(color)}
+                      className={`w-10 h-10 rounded-full border-2 transition-all flex items-center justify-center ${selectedColor === color ? 'border-oraimo-green scale-110 shadow-lg' : 'border-gray-100 hover:border-gray-300'}`}
+                      style={{ backgroundColor: color }}
+                      title={color}
+                    >
+                      {selectedColor === color && (
+                        <CheckCircle size={16} className={['#ffffff', '#fff', 'white'].includes(color.toLowerCase()) ? 'text-black' : 'text-white'} />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="space-y-4 mb-8">
               <h4 className="text-xs font-black uppercase tracking-widest text-gray-400">Caractéristiques principales</h4>
@@ -3389,20 +3981,20 @@ const ProductDetail: React.FC<{
             {/* Mobile Actions (Visible only on small screens) */}
             <div className="lg:hidden flex flex-col gap-3 mt-8">
               <button 
-                onClick={() => onAddToCart(product, quantity)}
-                className="w-full bg-white border-2 border-oraimo-black text-oraimo-black py-4 rounded-full font-black uppercase tracking-widest hover:bg-gray-50 transition-all"
+                onClick={() => onAddToCart(product, quantity, selectedColor || undefined)}
+                className="w-full bg-white border border-oraimo-black text-oraimo-black py-4 rounded-full font-bold text-sm transition-all hover:bg-gray-50"
               >
                 Ajouter au panier
               </button>
               <button 
                 onClick={() => setIsOrdering(true)}
-                className="w-full bg-oraimo-green text-white py-4 rounded-full font-black uppercase tracking-widest hover:bg-opacity-90 transition-all shadow-xl shadow-oraimo-green/20"
+                className="w-full bg-oraimo-black text-white py-4 rounded-full font-bold text-sm transition-all hover:bg-opacity-90 shadow-lg"
               >
                 Acheter maintenant
               </button>
               <button 
-                onClick={() => window.open(`https://wa.me/${settings.whatsapp}?text=Bonjour, je souhaite commander le produit : ${product.name} (${product.price} FCFA)`, '_blank')}
-                className="w-full bg-[#25D366] text-white py-4 rounded-full font-black uppercase tracking-widest hover:bg-opacity-90 transition-all flex items-center justify-center gap-3 shadow-xl shadow-[#25D366]/20"
+                onClick={() => window.open(`https://wa.me/${settings.whatsapp}?text=Bonjour, je souhaite commander le produit : ${product.name}${selectedColor ? ` (Couleur: ${selectedColor})` : ''} (${product.price} FCFA)`, '_blank')}
+                className="w-full bg-[#25D366] text-white py-4 rounded-full font-bold text-sm transition-all flex items-center justify-center gap-3 shadow-lg"
               >
                 <MessageCircle size={20} />
                 WhatsApp
@@ -3413,21 +4005,21 @@ const ProductDetail: React.FC<{
             <div className="hidden lg:flex flex-col gap-4">
               <div className="flex gap-4">
                 <button 
-                  onClick={() => onAddToCart(product, quantity)}
-                  className="flex-1 bg-white border-2 border-oraimo-black text-oraimo-black py-4 rounded-full font-black uppercase tracking-widest hover:bg-gray-50 transition-all"
+                  onClick={() => onAddToCart(product, quantity, selectedColor || undefined)}
+                  className="flex-1 bg-white border border-oraimo-black text-oraimo-black py-4 rounded-full font-bold text-sm transition-all hover:bg-gray-50"
                 >
                   Ajouter au panier
                 </button>
                 <button 
                   onClick={() => setIsOrdering(true)}
-                  className="flex-1 bg-oraimo-green text-white py-4 rounded-full font-black uppercase tracking-widest hover:bg-opacity-90 transition-all shadow-xl shadow-oraimo-green/20"
+                  className="flex-1 bg-oraimo-black text-white py-4 rounded-full font-bold text-sm transition-all hover:bg-opacity-90 shadow-lg"
                 >
                   Acheter maintenant
                 </button>
               </div>
               <button 
-                onClick={() => window.open(`https://wa.me/${settings.whatsapp}?text=Bonjour, je souhaite commander le produit : ${product.name} (${product.price} FCFA)`, '_blank')}
-                className="w-full bg-[#25D366] text-white py-4 rounded-full font-black uppercase tracking-widest hover:bg-opacity-90 transition-all flex items-center justify-center gap-3 shadow-xl shadow-[#25D366]/20"
+                onClick={() => window.open(`https://wa.me/${settings.whatsapp}?text=Bonjour, je souhaite commander le produit : ${product.name}${selectedColor ? ` (Couleur: ${selectedColor})` : ''} (${product.price} FCFA)`, '_blank')}
+                className="w-full bg-[#25D366] text-white py-4 rounded-full font-bold text-sm transition-all flex items-center justify-center gap-3 shadow-lg"
               >
                 <MessageCircle size={20} />
                 Commander via WhatsApp
@@ -3491,10 +4083,69 @@ const ProductDetail: React.FC<{
                         placeholder="Quartier, rue, point de repère..."
                       />
                     </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-4">Mode de paiement</label>
+                      <div className="grid grid-cols-1 gap-3">
+                        {paymentMethods.map((method) => (
+                          <button
+                            key={method.id}
+                            type="button"
+                            onClick={() => setOrderForm({ ...orderForm, paymentMethod: method.id as any })}
+                            className={`flex items-start gap-4 p-4 rounded-2xl border-2 transition-all text-left ${
+                              orderForm.paymentMethod === method.id 
+                                ? 'border-oraimo-green bg-oraimo-green/5' 
+                                : 'border-gray-100 bg-white hover:bg-gray-50'
+                            }`}
+                          >
+                            <div className={`p-2 rounded-xl ${orderForm.paymentMethod === method.id ? 'bg-white shadow-sm' : 'bg-gray-50'}`}>
+                              {method.icon}
+                            </div>
+                            <div>
+                              <p className="text-sm font-black text-oraimo-black">{method.title}</p>
+                              <p className="text-[10px] text-gray-400 font-bold leading-tight mt-1">{method.description}</p>
+                            </div>
+                            {orderForm.paymentMethod === method.id && (
+                              <div className="ml-auto">
+                                <CheckCircle size={16} className="text-oraimo-green" />
+                              </div>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Payment Instructions */}
+                      {orderForm.paymentMethod === 'mobile_money' && (
+                        <div className="mt-4 p-4 bg-orange-50 rounded-2xl border border-orange-100 animate-in fade-in slide-in-from-top-2">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-orange-600 mb-2">Instructions de paiement</p>
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-center text-xs font-bold">
+                              <span>MTN Mobile Money:</span>
+                              <span className="text-oraimo-black">{settings.mtnNumber || '+237 672 175 723'}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-xs font-bold">
+                              <span>Orange Money:</span>
+                              <span className="text-oraimo-black">{settings.orangeNumber || '+237 699 932 926'}</span>
+                            </div>
+                          </div>
+                          <p className="text-[9px] text-orange-400 mt-3 italic">Veuillez envoyer le montant total et nous contacter avec la preuve de paiement.</p>
+                        </div>
+                      )}
+
+                      {orderForm.paymentMethod === 'paypal' && (
+                        <div className="mt-4 p-4 bg-blue-50 rounded-2xl border border-blue-100 animate-in fade-in slide-in-from-top-2">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-blue-600 mb-2">Instructions PayPal</p>
+                          <div className="flex justify-between items-center text-xs font-bold">
+                            <span>Email PayPal:</span>
+                            <span className="text-oraimo-black">{settings.paypalEmail || 'joellmikamm@gmail.com'}</span>
+                          </div>
+                          <p className="text-[9px] text-blue-400 mt-3 italic">Veuillez envoyer le paiement à cette adresse email.</p>
+                        </div>
+                      )}
+                    </div>
                     <div className="flex gap-3 pt-2">
                       <EnregistrerButton 
                         onClick={handlePlaceOrder}
-                        label="Confirmer la commande"
+                        label={orderForm.paymentMethod === 'cash_on_delivery' ? 'Confirmer la commande' : 'Procéder au paiement'}
                       />
                       <button 
                         type="button"
@@ -3511,36 +4162,60 @@ const ProductDetail: React.FC<{
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="border-t border-gray-100">
-          <div className="flex border-b border-gray-100">
-            <button 
-              onClick={() => setActiveTab('description')}
-              className={`px-8 py-4 text-sm font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'description' ? 'border-oraimo-green text-oraimo-green' : 'border-transparent text-gray-400'}`}
-            >
-              Description
-            </button>
-            <button 
-              onClick={() => setActiveTab('reviews')}
-              className={`px-8 py-4 text-sm font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'reviews' ? 'border-oraimo-green text-oraimo-green' : 'border-transparent text-gray-400'}`}
-            >
-              Avis des clients ({product.reviewCount})
-            </button>
-          </div>
-
-          <div className="py-12">
-            {activeTab === 'description' ? (
-              <div className="max-w-4xl prose prose-slate prose-headings:font-black prose-headings:uppercase prose-headings:tracking-tight prose-p:text-gray-600 prose-p:leading-relaxed prose-p:font-normal">
+        {/* Content Section */}
+        <div id="product-content" className="pt-8">
+          {activeTab === 'description' ? (
+            <div className="space-y-0">
+              {/* Sales Content Style */}
+              <div className="max-w-none prose prose-slate prose-headings:font-black prose-headings:uppercase prose-headings:tracking-tight prose-p:text-gray-600 prose-p:leading-relaxed prose-p:font-normal prose-img:w-full prose-img:rounded-none prose-img:my-0">
                 {product.description ? (
-                  <ReactMarkdown>
-                    {product.description}
-                  </ReactMarkdown>
+                  <div className="space-y-12">
+                    {/* Replicating the "Sales Text" style from screenshots */}
+                    <div className="text-center px-4 py-12 bg-white">
+                      <h2 className="text-xl md:text-2xl font-black mb-4">Chargez rapidement deux appareils simultanément</h2>
+                      <p className="max-w-2xl mx-auto text-sm text-gray-500">
+                        Prend en charge la charge ultra-rapide de 35W pour deux appareils à la fois. Il peut charger un iPhone 17 Air ou un Samsung Galaxy S24 à 50% en seulement 30 minutes.
+                      </p>
+                    </div>
+                    
+                    <div className="w-full aspect-[16/9] bg-black overflow-hidden">
+                      <img 
+                        src="https://picsum.photos/seed/oraimo-power/1200/675" 
+                        alt="Sales Feature" 
+                        className="w-full h-full object-cover opacity-90"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+
+                    <div className="text-center px-4 py-12 bg-white">
+                      <h2 className="text-xl md:text-2xl font-black mb-4">Double entrée, charge plus rapide</h2>
+                      <p className="max-w-2xl mx-auto text-sm text-gray-500">
+                        Doté d'une double entrée de charge, il réduit le temps de recharge automatique jusqu'à 50% par rapport aux produits à simple entrée, réduisant considérablement le temps d'attente.
+                      </p>
+                    </div>
+
+                    <div className="w-full aspect-[16/9] bg-[#1A1A1A] overflow-hidden">
+                      <img 
+                        src="https://picsum.photos/seed/oraimo-input/1200/675" 
+                        alt="Sales Feature" 
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+
+                    <div className="px-4 py-12">
+                      <ReactMarkdown>
+                        {product.description}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
                 ) : (
-                  <p className="text-gray-600 leading-relaxed text-base">
+                  <p className="text-gray-600 leading-relaxed text-base px-4">
                     Aucune description détaillée disponible pour le moment.
                   </p>
                 )}
-                <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-8 not-prose">
+                
+                <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-8 px-4">
                   <div>
                     <h4 className="font-black uppercase text-sm mb-4">Paramètres du produit</h4>
                     <ul className="space-y-2 text-sm text-gray-500">
@@ -3551,45 +4226,113 @@ const ProductDetail: React.FC<{
                   </div>
                 </div>
               </div>
-            ) : (
-              <div className="space-y-8">
-                {product.reviews?.map((review) => (
-                  <div key={review.id} className="border-b border-gray-50 pb-8">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <p className="font-black text-oraimo-black">{review.user}</p>
-                        <div className="flex items-center gap-1 mt-1">
+            </div>
+          ) : (
+            <div className="space-y-12">
+              {/* Review Summary Header */}
+              <div className="bg-white p-6 md:p-8 rounded-2xl border border-gray-50">
+                <h3 className="text-sm font-black uppercase tracking-widest mb-8">Avis des clients</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-4">Note globale</p>
+                    <div className="flex items-center gap-4">
+                      <span className="text-5xl font-black tracking-tighter">{product.rating.toFixed(1)}</span>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-1">
                           {[1, 2, 3, 4, 5].map((s) => (
-                            <Star key={s} size={12} className={`${s <= review.rating ? 'fill-oraimo-green text-oraimo-green' : 'text-gray-200'}`} />
+                            <Star key={s} size={16} className={`${s <= Math.floor(product.rating) ? 'fill-oraimo-green text-oraimo-green' : 'text-gray-200'}`} />
                           ))}
                         </div>
+                        <span className="text-xs font-bold text-gray-400">({product.reviewCount})</span>
                       </div>
-                      <span className="text-xs text-gray-400">{review.date}</span>
+                      <button className="ml-auto text-xs font-black uppercase tracking-widest text-oraimo-black border-b border-oraimo-black pb-1">
+                        Ajoutez votre avis &gt;
+                      </button>
                     </div>
-                    <p className="text-gray-600 text-sm leading-relaxed">{review.comment}</p>
                   </div>
-                ))}
+                  <div className="space-y-2">
+                    {[5, 4, 3, 2, 1].map((rating) => (
+                      <div key={rating} className="flex items-center gap-4">
+                        <div className="flex items-center gap-1 w-20">
+                          {[1, 2, 3, 4, 5].map((s) => (
+                            <Star key={s} size={10} className={`${s <= rating ? 'fill-oraimo-green text-oraimo-green' : 'text-gray-200'}`} />
+                          ))}
+                        </div>
+                        <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-oraimo-green/30" 
+                            style={{ width: rating === 5 ? '80%' : rating === 4 ? '15%' : '0%' }}
+                          />
+                        </div>
+                        <span className="text-[10px] font-bold text-gray-400 w-4">0</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
-            )}
-          </div>
-        </div>
 
-        {/* Related Products */}
-        <div className="py-16 border-t border-gray-100">
-          <h2 className="text-2xl font-black uppercase tracking-tight mb-8">Vous pourrez aussi aimer</h2>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {products.filter(p => p.id !== product.id).slice(0, 4).map((p) => (
-              <ProductCard 
-                key={p.id} 
-                product={p} 
-                settings={settings}
-                formatPrice={formatPrice}
-                onClick={() => navigate(`/product/${p.id}`)} 
-                onAddToCart={(e) => { e.stopPropagation(); onAddToCart(p); }} 
-                onBuyNow={(e) => { e.stopPropagation(); navigate(`/product/${p.id}`, { state: { openOrderForm: true } }); }}
-              />
-            ))}
-          </div>
+              <div className="space-y-8">
+                {product.reviews && product.reviews.length > 0 ? (
+                  product.reviews.map((review) => (
+                    <div key={review.id} className="border-b border-gray-50 pb-8">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <p className="font-black text-oraimo-black">{review.user}</p>
+                          <div className="flex items-center gap-1 mt-1">
+                            {[1, 2, 3, 4, 5].map((s) => (
+                              <Star key={s} size={12} className={`${s <= review.rating ? 'fill-oraimo-green text-oraimo-green' : 'text-gray-200'}`} />
+                            ))}
+                          </div>
+                        </div>
+                        <span className="text-xs text-gray-400 font-bold">{review.date}</span>
+                      </div>
+                      <p className="text-sm text-gray-600 leading-relaxed">{review.comment}</p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-12">
+                    <p className="text-gray-400 font-bold">Aucun avis pour le moment.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Related Products */}
+      <div className="py-16 border-t border-gray-100 container">
+        <h2 className="text-2xl font-black uppercase tracking-tight mb-8">Vous pourrez aussi aimer</h2>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {products.filter(p => p.id !== product.id).slice(0, 4).map((p) => (
+            <ProductCard 
+              key={p.id} 
+              product={p} 
+              settings={settings}
+              formatPrice={formatPrice}
+              onClick={() => navigate(`/product/${p.id}`)} 
+              onAddToCart={(e) => { e.stopPropagation(); onAddToCart(p); }} 
+              onBuyNow={(e) => { e.stopPropagation(); navigate(`/product/${p.id}`, { state: { openOrderForm: true } }); }}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Sticky Bottom Actions */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-100 p-4 lg:hidden">
+        <div className="flex gap-3">
+          <button 
+            onClick={() => onAddToCart(product, quantity, selectedColor || undefined)}
+            className="flex-1 bg-white border border-oraimo-black text-oraimo-black py-3 rounded-full font-bold text-sm transition-all hover:bg-gray-50"
+          >
+            Ajouter au panier
+          </button>
+          <button 
+            onClick={() => setIsOrdering(true)}
+            className="flex-1 bg-oraimo-black text-white py-3 rounded-full font-bold text-sm transition-all hover:bg-opacity-90 shadow-lg"
+          >
+            Acheter maintenant
+          </button>
         </div>
       </div>
     </div>
@@ -3606,95 +4349,76 @@ const ProductCard: React.FC<{
   formatPrice: (p: number) => string
 }> = ({ product, onClick, onAddToCart, onBuyNow, isFlashSale, settings, formatPrice }) => {
   const discount = product.originalPrice ? Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100) : 0;
-  const soldPercentage = isFlashSale ? Math.floor(Math.random() * 40) + 60 : 0; // Mock sold percentage
 
   return (
     <div 
       onClick={onClick}
-      className="bg-white rounded-2xl overflow-hidden border border-gray-100 flex flex-col h-full group cursor-pointer hover:shadow-2xl transition-all duration-500"
+      className="flex flex-col h-full cursor-pointer group bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300"
     >
-      <div className="relative aspect-square bg-oraimo-light p-6 overflow-hidden">
+      {/* Image Section */}
+      <div className="relative aspect-square bg-[#F8F8F8] overflow-hidden">
         <img 
           src={product.image} 
           alt={product.name} 
-          className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-700"
+          className="w-full h-full object-contain p-6 group-hover:scale-110 transition-transform duration-700 ease-out"
           referrerPolicy="no-referrer"
           loading="lazy"
         />
+        
+        {/* Badges */}
         <div className="absolute top-3 left-3 flex flex-col gap-1.5">
-          {product.tag && (
-            <span className={`text-white text-[10px] font-black px-2.5 py-1 rounded-sm uppercase tracking-wider ${product.tag === 'NOUVEAU' ? 'bg-oraimo-green' : 'bg-[#FF4D4D]'}`}>
-              {product.tag}
+          {(product.tag || isFlashSale) && (
+            <span className={`text-white text-[10px] font-black px-2.5 py-1 rounded-sm uppercase tracking-widest shadow-sm ${
+              product.tag === 'VENTE FLASH' || isFlashSale ? 'bg-[#93C01F]' : 
+              product.tag === 'NOUVEAU' ? 'bg-[#93C01F]' : 'bg-black'
+            }`}>
+              {isFlashSale ? 'VENTE FLASH' : product.tag}
             </span>
           )}
           {discount > 0 && (
-            <span className="bg-[#FF4D4D] text-white text-[10px] font-black px-2.5 py-1 rounded-sm uppercase tracking-wider">
+            <span className="bg-red-600 text-white text-[10px] font-black px-2.5 py-1 rounded-sm uppercase tracking-widest shadow-sm">
               -{discount}%
             </span>
           )}
         </div>
-        <button className="absolute top-3 right-3 w-10 h-10 bg-white/90 backdrop-blur-sm rounded-full shadow-lg flex items-center justify-center text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-y-2 group-hover:translate-y-0">
-          <Heart size={20} />
-        </button>
-      </div>
-      <div className="p-5 flex flex-col flex-grow">
-        <div className="flex items-center gap-1.5 mb-2">
-          <div className="flex items-center">
-            {[1, 2, 3, 4, 5].map((s) => (
-              <Star key={s} size={12} className={`${s <= Math.floor(product.rating) ? 'fill-oraimo-green text-oraimo-green' : 'text-gray-200'}`} />
-            ))}
-          </div>
-          <span className="text-[11px] font-bold text-gray-400">({product.reviewCount})</span>
+
+        {/* Rating Overlay */}
+        <div className="absolute bottom-3 left-3 bg-white/95 backdrop-blur-sm px-2 py-1 rounded-sm flex items-center gap-1.5 shadow-sm border border-gray-100">
+          <span className="text-[11px] font-black text-oraimo-black leading-none">{product.rating.toFixed(1)}</span>
+          <Star size={10} className="fill-oraimo-green text-oraimo-green" />
+          <span className="text-[10px] text-gray-400 font-bold leading-none">({product.reviewCount})</span>
         </div>
-        <h3 className="text-[14px] font-black text-oraimo-black leading-snug mb-3 line-clamp-2 min-h-[2.8rem] group-hover:text-oraimo-green transition-colors">
+      </div>
+
+      {/* Info Section */}
+      <div className="flex flex-col flex-grow p-4">
+        <h3 className="text-[14px] font-bold text-oraimo-black leading-snug mb-4 line-clamp-2 min-h-[2.8rem] group-hover:text-oraimo-green transition-colors">
           {product.name}
         </h3>
         
-        {isFlashSale && (
-          <div className="mb-4">
-            <div className="flex justify-between items-center mb-1.5">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Vendu {soldPercentage}%</span>
+        {/* Features List */}
+        <div className="space-y-0.5 mb-4">
+          {product.features.slice(0, 2).map((feature, i) => (
+            <div key={i} className="flex items-center gap-2.5 py-2 border-t border-gray-50 first:border-t-0">
+              <div className="w-4 h-4 rounded-full bg-oraimo-black flex items-center justify-center flex-shrink-0">
+                <Check size={9} className="text-white" />
+              </div>
+              <span className="text-[11px] text-gray-600 font-medium line-clamp-1">{feature}</span>
             </div>
-            <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-oraimo-green transition-all duration-1000" 
-                style={{ width: `${soldPercentage}%` }}
-              />
-            </div>
-          </div>
-        )}
+          ))}
+        </div>
 
-        <div className="mt-auto space-y-2">
-          <div className="flex items-baseline gap-1 mb-2">
-            <span className="text-2xl font-black text-oraimo-black tracking-tighter">
+        {/* Price Section */}
+        <div className="mt-auto pt-4 border-t border-gray-100">
+          <div className="flex items-baseline gap-2">
+            <span className="text-[17px] font-black text-oraimo-black tracking-tight">
               {formatPrice(product.price)}
             </span>
             {product.originalPrice && (
-              <span className="text-[13px] text-gray-300 line-through font-bold ml-2">
+              <span className="text-[12px] text-gray-400 line-through font-bold">
                 {formatPrice(product.originalPrice)}
               </span>
             )}
-          </div>
-          <div className="flex flex-col gap-2">
-            <button 
-              onClick={(e) => {
-                e.stopPropagation();
-                onAddToCart(e);
-              }}
-              className="w-full bg-white border border-oraimo-black text-oraimo-black py-3 rounded-xl flex items-center justify-center gap-3 text-[10px] font-black uppercase tracking-widest hover:bg-gray-50 transition-all"
-            >
-              <ShoppingCart size={16} />
-              Panier
-            </button>
-            <button 
-              onClick={(e) => {
-                e.stopPropagation();
-                onBuyNow(e);
-              }}
-              className="w-full bg-oraimo-black text-white py-3 rounded-xl flex items-center justify-center gap-3 text-[10px] font-black uppercase tracking-widest hover:bg-oraimo-green transition-all shadow-lg hover:shadow-oraimo-green/20"
-            >
-              Acheter maintenant
-            </button>
           </div>
         </div>
       </div>
@@ -3702,19 +4426,62 @@ const ProductCard: React.FC<{
   );
 };
 
-const CheckoutModal: React.FC<{ cartItems: any[], total: number, onClose: () => void, onSuccess: () => void, showNotification: (m: string, t?: 'success' | 'error') => void, formatPrice: (p: number) => string }> = ({ cartItems, total, onClose, onSuccess, showNotification, formatPrice }) => {
+const CheckoutModal: React.FC<{ cartItems: any[], total: number, onClose: () => void, onSuccess: () => void, showNotification: (m: string, t?: 'success' | 'error') => void, formatPrice: (p: number) => string, settings: SiteSettings }> = ({ cartItems, total, onClose, onSuccess, showNotification, formatPrice, settings }) => {
   const [form, setForm] = useState({
     name: '',
     phone: '',
     city: 'Douala',
-    address: ''
+    address: '',
+    paymentMethod: 'cash_on_delivery' as 'cash_on_delivery' | 'mobile_money' | 'card' | 'paypal'
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const paymentMethods = [
+    {
+      id: 'cash_on_delivery',
+      title: 'Paiement à la livraison',
+      description: 'Payez en espèces lors de la réception de votre colis.',
+      icon: <Banknote size={20} className="text-oraimo-green" />
+    },
+    {
+      id: 'mobile_money',
+      title: 'Mobile Money (Orange/MTN)',
+      description: 'Paiement sécurisé via Orange Money ou MTN Mobile Money.',
+      icon: <Smartphone size={20} className="text-orange-500" />
+    },
+    {
+      id: 'paypal',
+      title: 'PayPal',
+      description: 'Paiement sécurisé via PayPal.',
+      icon: <CreditCard size={20} className="text-blue-600" />
+    },
+    {
+      id: 'card',
+      title: 'Carte Bancaire',
+      description: 'Payez par carte Visa ou Mastercard.',
+      icon: <CreditCard size={20} className="text-blue-500" />
+    }
+  ];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
     try {
+      // Simulate payment processing for non-COD methods
+      if (form.paymentMethod !== 'cash_on_delivery') {
+        // Here you would normally call the payment aggregator's API
+        // based on settings.paymentAggregator
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        if (settings.paymentAggregator === 'none') {
+          showNotification('Aucun agrégateur de paiement configuré. La commande sera traitée comme Paiement à la Livraison.', 'error');
+        } else {
+          showNotification(`Redirection vers ${settings.paymentAggregator.toUpperCase()}...`, 'success');
+          // In a real app, you would redirect here:
+          // window.location.href = paymentUrl;
+        }
+      }
+
       const orderData: Omit<Order, 'id'> = {
         customerName: form.name,
         customerPhone: form.phone,
@@ -3724,10 +4491,13 @@ const CheckoutModal: React.FC<{ cartItems: any[], total: number, onClose: () => 
           productId: item.id,
           name: item.name,
           quantity: item.quantity,
-          price: item.price
+          price: item.price,
+          color: item.color
         })),
         totalAmount: total,
         status: 'pending',
+        paymentMethod: form.paymentMethod,
+        paymentStatus: 'pending',
         createdAt: serverTimestamp()
       };
 
@@ -3822,12 +4592,71 @@ const CheckoutModal: React.FC<{ cartItems: any[], total: number, onClose: () => 
               placeholder="Quartier, rue, point de repère..."
             />
           </div>
+          <div>
+            <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-4">Mode de paiement</label>
+            <div className="space-y-3">
+              {paymentMethods.map((method) => (
+                <button
+                  key={method.id}
+                  type="button"
+                  onClick={() => setForm({ ...form, paymentMethod: method.id as any })}
+                  className={`w-full flex items-start gap-4 p-4 rounded-2xl border-2 transition-all text-left ${
+                    form.paymentMethod === method.id 
+                      ? 'border-oraimo-green bg-oraimo-green/5' 
+                      : 'border-gray-50 bg-gray-50 hover:bg-gray-100'
+                  }`}
+                >
+                  <div className={`p-2 rounded-xl ${form.paymentMethod === method.id ? 'bg-white shadow-sm' : 'bg-white/50'}`}>
+                    {method.icon}
+                  </div>
+                  <div>
+                    <p className="text-sm font-black text-oraimo-black">{method.title}</p>
+                    <p className="text-[10px] text-gray-400 font-bold leading-tight mt-1">{method.description}</p>
+                  </div>
+                  {form.paymentMethod === method.id && (
+                    <div className="ml-auto">
+                      <CheckCircle size={16} className="text-oraimo-green" />
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Payment Instructions */}
+            {form.paymentMethod === 'mobile_money' && (
+              <div className="mt-4 p-4 bg-orange-50 rounded-2xl border border-orange-100 animate-in fade-in slide-in-from-top-2">
+                <p className="text-[10px] font-black uppercase tracking-widest text-orange-600 mb-2">Instructions de paiement</p>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center text-xs font-bold">
+                    <span>MTN Mobile Money:</span>
+                    <span className="text-oraimo-black">{settings.mtnNumber || '+237 672 175 723'}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs font-bold">
+                    <span>Orange Money:</span>
+                    <span className="text-oraimo-black">{settings.orangeNumber || '+237 699 932 926'}</span>
+                  </div>
+                </div>
+                <p className="text-[9px] text-orange-400 mt-3 italic">Veuillez envoyer le montant total et nous contacter avec la preuve de paiement.</p>
+              </div>
+            )}
+
+            {form.paymentMethod === 'paypal' && (
+              <div className="mt-4 p-4 bg-blue-50 rounded-2xl border border-blue-100 animate-in fade-in slide-in-from-top-2">
+                <p className="text-[10px] font-black uppercase tracking-widest text-blue-600 mb-2">Instructions PayPal</p>
+                <div className="flex justify-between items-center text-xs font-bold">
+                  <span>Email PayPal:</span>
+                  <span className="text-oraimo-black">{settings.paypalEmail || 'joellmikamm@gmail.com'}</span>
+                </div>
+                <p className="text-[9px] text-blue-400 mt-3 italic">Veuillez envoyer le paiement à cette adresse email.</p>
+              </div>
+            )}
+          </div>
           <button 
             disabled={isSubmitting}
             type="submit"
             className="w-full bg-oraimo-green text-white py-4 rounded-xl font-black uppercase tracking-widest shadow-xl shadow-oraimo-green/20 disabled:opacity-50"
           >
-            {isSubmitting ? 'Traitement...' : 'Confirmer la commande'}
+            {isSubmitting ? 'Traitement...' : form.paymentMethod === 'cash_on_delivery' ? 'Confirmer la commande' : 'Procéder au paiement'}
           </button>
         </form>
       </motion.div>

@@ -21,8 +21,9 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      // NOTE: Temporarily allowing writes without Google login as requested by the user.
+      // In a production app, this should be secured with proper authentication.
+      return true;
     }
 
     function isValidProduct(data) {

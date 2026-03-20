@@ -15,11 +15,13 @@ export interface Product {
   category: string;
   tag?: string;
   description?: string;
+  seoDescription?: string;
   rating: number;
   reviewCount: number;
   features: string[];
   images?: string[];
   reviews?: Review[];
+  colors?: string[];
 }
 
 export interface Category {
@@ -41,10 +43,18 @@ export interface Order {
     name: string;
     quantity: number;
     price: number;
+    color?: string;
   }[];
   totalAmount: number;
   status: 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
+  paymentMethod: 'cash_on_delivery' | 'mobile_money' | 'card' | 'paypal';
+  paymentStatus: 'pending' | 'paid' | 'failed';
   createdAt: any;
+}
+
+export interface CartItem extends Product {
+  quantity: number;
+  color?: string;
 }
 
 export interface SiteSettings {
@@ -53,9 +63,13 @@ export interface SiteSettings {
   phone: string;
   whatsapp: string;
   email: string;
+  mtnNumber?: string;
+  orangeNumber?: string;
+  paypalEmail?: string;
   siteName: string;
   seoTitle: string;
   seoDescription: string;
+  seoKeywords?: string;
   heroBanners?: {
     image: string;
     title: string;
@@ -77,6 +91,12 @@ export interface SiteSettings {
   apiKey?: string;
   smtpServer?: string;
   isMaintenanceMode?: boolean;
+  // Payment Integration
+  paymentAggregator?: 'campay' | 'cinetpay' | 'flutterwave' | 'none';
+  campayAppId?: string;
+  campayAppSecret?: string;
+  cinetpayApiKey?: string;
+  cinetpaySiteId?: string;
 }
 
 export interface UserProfile {

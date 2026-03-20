@@ -1,5 +1,6 @@
 User-agent: *
 Allow: /
 Disallow: /admin
+Disallow: /admin/*
 
 Sitemap: https://ais-pre-gnidvjr4fqnupi4juhejja-38960205441.europe-west3.run.app/sitemap.xml
